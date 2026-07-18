@@ -1,0 +1,837 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Scan — Document Lens</title>
+<style>
+  :root{
+    --bg:#0B0C0E;
+    --panel:#151619;
+    --panel-2:#1D1F23;
+    --line:#2A2C31;
+    --text:#F5F5F0;
+    --muted:#9CA3AF;
+    --amber:#F5A623;
+    --amber-dim:#8A5E14;
+    --teal:#2DD4BF;
+    --danger:#EF5A5A;
+    --radius:16px;
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
+  html,body{margin:0;padding:0;height:100%;background:#000;color:var(--text);overflow:hidden;}
+  body{
+    display:flex; justify-content:center; align-items:center;
+    height:100dvh; width:100vw;
+  }
+  #app{
+    position:relative; width:100%; max-width:480px; height:100dvh; max-height:960px;
+    background:var(--bg); overflow:hidden; box-shadow:0 0 60px rgba(0,0,0,.6);
+    display:flex; flex-direction:column;
+  }
+  @media (min-width:481px){
+    #app{ border-radius:28px; height:92dvh; }
+  }
+
+  .screen{ position:absolute; inset:0; display:none; flex-direction:column; }
+  .screen.active{ display:flex; }
+
+  /* ---------- shared bits ---------- */
+  .eyebrow{
+    font-size:11px; letter-spacing:.12em; text-transform:uppercase; color:var(--muted); font-weight:600;
+  }
+  .icon-btn{
+    width:42px; height:42px; border-radius:50%; border:none; background:rgba(255,255,255,.08);
+    color:var(--text); display:flex; align-items:center; justify-content:center; cursor:pointer;
+    transition:background .15s ease, transform .1s ease;
+  }
+  .icon-btn:active{ transform:scale(.92); background:rgba(255,255,255,.16); }
+  .icon-btn svg{ width:20px; height:20px; }
+  .pill-btn{
+    padding:9px 16px; border-radius:999px; border:1px solid var(--line); background:var(--panel-2);
+    color:var(--text); font-size:13px; font-weight:600; cursor:pointer;
+  }
+  .primary-btn{
+    padding:13px 22px; border-radius:14px; border:none; background:var(--amber); color:#241A05;
+    font-size:15px; font-weight:700; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:8px;
+  }
+  .primary-btn:active{ filter:brightness(.92); }
+  .primary-btn.teal{ background:var(--teal); color:#062A26; }
+  .ghost-btn{
+    padding:13px 22px; border-radius:14px; border:1px solid var(--line); background:transparent;
+    color:var(--text); font-size:15px; font-weight:600; cursor:pointer;
+  }
+
+  /* ---------- CAMERA SCREEN ---------- */
+  #screen-camera .cam-top{
+    position:absolute; top:0; left:0; right:0; z-index:5;
+    display:flex; justify-content:space-between; align-items:center;
+    padding:16px 16px 0 16px;
+  }
+  #video-wrap{ position:relative; flex:1; background:#000; overflow:hidden; }
+  #video{ width:100%; height:100%; object-fit:cover; display:block; }
+  #canvas-hidden{ display:none; }
+  .no-cam-msg{
+    position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center;
+    gap:14px; padding:0 40px; text-align:center; color:var(--muted); font-size:14px;
+  }
+  .scan-sweep{
+    position:absolute; left:0; right:0; height:3px; background:linear-gradient(90deg,transparent,var(--amber),transparent);
+    box-shadow:0 0 16px 2px var(--amber); top:0; opacity:0; pointer-events:none;
+  }
+  .scan-sweep.playing{ animation:sweep .6s ease-in-out; }
+  @keyframes sweep{
+    0%{ top:6%; opacity:0; } 15%{opacity:1;} 85%{opacity:1;} 100%{ top:94%; opacity:0; }
+  }
+  .flash-overlay{ position:absolute; inset:0; background:#fff; opacity:0; pointer-events:none; }
+  .flash-overlay.flashing{ animation:flash .28s ease-out; }
+  @keyframes flash{ 0%{opacity:.9;} 100%{opacity:0;} }
+
+  .mode-row{
+    position:absolute; bottom:118px; left:0; right:0; z-index:5;
+    display:flex; gap:8px; justify-content:center; padding:0 12px; overflow-x:auto; scrollbar-width:none;
+  }
+  .mode-row::-webkit-scrollbar{ display:none; }
+  .mode-chip{
+    flex:0 0 auto; padding:8px 14px; border-radius:999px; border:1px solid transparent;
+    background:rgba(20,21,24,.7); backdrop-filter:blur(6px); color:var(--muted); font-size:13px; font-weight:600;
+    cursor:pointer; white-space:nowrap;
+  }
+  .mode-chip.active{ color:#241A05; background:var(--amber); }
+
+  .cam-bottom{
+    position:absolute; bottom:0; left:0; right:0; z-index:5; padding:22px 24px 28px 24px;
+    display:flex; align-items:center; justify-content:space-between;
+  }
+  .thumb-stack{
+    width:48px; height:48px; border-radius:10px; border:2px solid rgba(255,255,255,.5);
+    background:var(--panel-2) center/cover no-repeat; position:relative; cursor:pointer;
+  }
+  .thumb-stack .count{
+    position:absolute; top:-6px; right:-6px; background:var(--amber); color:#241A05; font-size:11px; font-weight:800;
+    width:20px; height:20px; border-radius:50%; display:flex; align-items:center; justify-content:center;
+  }
+  .shutter{
+    width:74px; height:74px; border-radius:50%; background:#fff; border:4px solid rgba(255,255,255,.35);
+    display:flex; align-items:center; justify-content:center; cursor:pointer;
+  }
+  .shutter::after{ content:""; width:60px; height:60px; border-radius:50%; background:var(--amber); }
+  .shutter:active::after{ background:var(--amber-dim); }
+  .import-btn{ width:48px; height:48px; }
+
+  /* ---------- EDIT (crop) SCREEN ---------- */
+  #screen-edit .edit-top, #screen-filter .filter-top{
+    display:flex; align-items:center; justify-content:space-between; padding:14px 16px;
+  }
+  .edit-stage{ flex:1; position:relative; display:flex; align-items:center; justify-content:center; background:#000; overflow:hidden; }
+  #edit-img{ max-width:100%; max-height:100%; display:block; user-select:none; -webkit-user-drag:none; }
+  #crop-svg{ position:absolute; touch-action:none; }
+  #crop-svg polygon{ fill:rgba(245,166,35,.16); stroke:var(--amber); stroke-width:2; }
+  .handle{ fill:var(--amber); stroke:#20160300; cursor:grab; }
+  .handle-ring{ fill:none; stroke:var(--amber); stroke-width:2; opacity:.55; }
+  .edit-bottom{ display:flex; gap:10px; padding:16px; }
+  .edit-bottom .ghost-btn, .edit-bottom .primary-btn{ flex:1; }
+
+  /* ---------- FILTER SCREEN ---------- */
+  .filter-stage{ flex:1; display:flex; align-items:center; justify-content:center; background:#000; overflow:hidden; padding:10px; }
+  #filter-canvas{ max-width:100%; max-height:100%; border-radius:6px; box-shadow:0 8px 30px rgba(0,0,0,.5); }
+  .filter-row{ display:flex; gap:10px; padding:14px 16px; overflow-x:auto; scrollbar-width:none; }
+  .filter-row::-webkit-scrollbar{ display:none; }
+  .filter-chip{ flex:0 0 auto; display:flex; flex-direction:column; align-items:center; gap:6px; cursor:pointer; }
+  .filter-thumb{
+    width:56px; height:56px; border-radius:10px; background:var(--panel-2); border:2px solid transparent; overflow:hidden;
+  }
+  .filter-thumb img{ width:100%; height:100%; object-fit:cover; display:block; }
+  .filter-chip.active .filter-thumb{ border-color:var(--amber); }
+  .filter-chip span{ font-size:11px; color:var(--muted); }
+  .filter-chip.active span{ color:var(--text); font-weight:600; }
+  .filter-bottom{ display:flex; gap:10px; padding:14px 16px 18px 16px; }
+  .filter-bottom .ghost-btn, .filter-bottom .primary-btn{ flex:1; }
+
+  /* ---------- GALLERY SCREEN ---------- */
+  .gal-top{ display:flex; align-items:center; justify-content:space-between; padding:16px; }
+  .gal-title{ font-size:18px; font-weight:800; }
+  .gal-grid{
+    flex:1; overflow-y:auto; padding:4px 16px 16px 16px; display:grid; grid-template-columns:repeat(3,1fr); gap:10px; align-content:start;
+  }
+  .gal-item{ position:relative; border-radius:10px; overflow:hidden; background:var(--panel-2); aspect-ratio:3/4; }
+  .gal-item img{ width:100%; height:100%; object-fit:cover; display:block; }
+  .gal-item .page-no{
+    position:absolute; bottom:6px; left:6px; background:rgba(0,0,0,.55); color:#fff; font-size:10px; font-weight:700;
+    padding:2px 6px; border-radius:6px;
+  }
+  .gal-item .del-btn{
+    position:absolute; top:6px; right:6px; width:24px; height:24px; border-radius:50%; background:rgba(0,0,0,.55);
+    border:none; color:#fff; display:flex; align-items:center; justify-content:center; cursor:pointer;
+  }
+  .gal-empty{ flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px; color:var(--muted); padding:0 40px; text-align:center; }
+  .gal-bottom{ display:flex; gap:10px; padding:14px 16px 18px 16px; border-top:1px solid var(--line); }
+  .gal-bottom .primary-btn, .gal-bottom .ghost-btn{ flex:1; }
+  .toast{
+    position:absolute; bottom:90px; left:50%; transform:translateX(-50%) translateY(20px); background:var(--panel-2);
+    border:1px solid var(--line); color:var(--text); font-size:13px; font-weight:600; padding:10px 16px; border-radius:999px;
+    opacity:0; pointer-events:none; transition:opacity .2s ease, transform .2s ease; z-index:50; white-space:nowrap;
+  }
+  .toast.show{ opacity:1; transform:translateX(-50%) translateY(0); }
+
+  input[type=file]{ display:none; }
+</style>
+</head>
+<body>
+<div id="app">
+
+  <!-- ================= CAMERA ================= -->
+  <div id="screen-camera" class="screen active">
+    <div class="cam-top">
+      <div class="eyebrow" id="mode-label">Document</div>
+      <div style="display:flex; gap:10px;">
+        <button class="icon-btn" id="flash-btn" title="Flash overlay">
+          <svg viewBox="0 0 24 24" fill="none"><path d="M13 2L4 14h6l-1 8 9-12h-6l1-8z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>
+        </button>
+        <button class="icon-btn" id="flip-btn" title="Switch camera">
+          <svg viewBox="0 0 24 24" fill="none"><path d="M17 2l4 4-4 4M7 22l-4-4 4-4M3 6h13a4 4 0 014 4M21 18H8a4 4 0 01-4-4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+      </div>
+    </div>
+
+    <div id="video-wrap">
+      <video id="video" autoplay playsinline muted></video>
+      <div class="scan-sweep" id="sweep"></div>
+      <div class="flash-overlay" id="flash-overlay"></div>
+      <div class="no-cam-msg" id="no-cam-msg" style="display:none;">
+        <svg width="40" height="40" viewBox="0 0 24 24" fill="none"><rect x="3" y="6" width="18" height="14" rx="2" stroke="currentColor" stroke-width="1.5"/><circle cx="12" cy="13" r="4" stroke="currentColor" stroke-width="1.5"/><path d="M8 6l1.5-2h5L16 6" stroke="currentColor" stroke-width="1.5"/></svg>
+        <div>Camera not available. Import a photo instead to scan it.</div>
+      </div>
+    </div>
+
+    <div class="mode-row" id="mode-row">
+      <div class="mode-chip active" data-mode="document">Document</div>
+      <div class="mode-chip" data-mode="whiteboard">Whiteboard</div>
+      <div class="mode-chip" data-mode="photo">Photo</div>
+      <div class="mode-chip" data-mode="card">Business Card</div>
+    </div>
+
+    <div class="cam-bottom">
+      <div class="thumb-stack" id="thumb-stack">
+        <span class="count" id="thumb-count" style="display:none;">0</span>
+      </div>
+      <div class="shutter" id="shutter-btn"></div>
+      <button class="icon-btn import-btn" id="import-btn" title="Import photo">
+        <svg viewBox="0 0 24 24" fill="none"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 21h16" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+    </div>
+    <input type="file" id="file-input" accept="image/*" capture="environment">
+  </div>
+
+  <!-- ================= EDIT / CROP ================= -->
+  <div id="screen-edit" class="screen">
+    <div class="edit-top">
+      <button class="icon-btn" id="edit-cancel">
+        <svg viewBox="0 0 24 24" fill="none"><path d="M18 6L6 18M6 6l12 12" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+      </button>
+      <div class="eyebrow">Adjust corners</div>
+      <button class="icon-btn" id="edit-rotate">
+        <svg viewBox="0 0 24 24" fill="none"><path d="M3 12a9 9 0 109-9M3 3v6h6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+    </div>
+    <div class="edit-stage" id="edit-stage">
+      <img id="edit-img" alt="captured page">
+      <svg id="crop-svg"></svg>
+    </div>
+    <div class="edit-bottom">
+      <button class="ghost-btn" id="edit-retake">Retake</button>
+      <button class="primary-btn" id="edit-confirm">Flatten page →</button>
+    </div>
+  </div>
+
+  <!-- ================= FILTER ================= -->
+  <div id="screen-filter" class="screen">
+    <div class="filter-top">
+      <button class="icon-btn" id="filter-back">
+        <svg viewBox="0 0 24 24" fill="none"><path d="M15 6l-6 6 6 6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+      <div class="eyebrow" id="filter-page-label">Page 1</div>
+      <div style="width:42px;"></div>
+    </div>
+    <div class="filter-stage">
+      <canvas id="filter-canvas"></canvas>
+    </div>
+    <div class="filter-row" id="filter-row"></div>
+    <div class="filter-bottom">
+      <button class="ghost-btn" id="filter-scan-another">Scan another</button>
+      <button class="primary-btn teal" id="filter-done">Done — view pages</button>
+    </div>
+  </div>
+
+  <!-- ================= GALLERY ================= -->
+  <div id="screen-gallery" class="screen">
+    <div class="gal-top">
+      <button class="icon-btn" id="gal-back">
+        <svg viewBox="0 0 24 24" fill="none"><path d="M15 6l-6 6 6 6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+      <div class="gal-title" id="gal-title">0 pages</div>
+      <button class="icon-btn" id="gal-add">
+        <svg viewBox="0 0 24 24" fill="none"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+      </button>
+    </div>
+    <div class="gal-grid" id="gal-grid"></div>
+    <div class="gal-empty" id="gal-empty" style="display:none;">
+      <svg width="40" height="40" viewBox="0 0 24 24" fill="none"><path d="M4 4h16v16H4z" stroke="currentColor" stroke-width="1.4" stroke-dasharray="3 3"/></svg>
+      <div>No pages yet. Scan a document to see it here.</div>
+    </div>
+    <div class="gal-bottom">
+      <button class="ghost-btn" id="gal-save-images">Save images</button>
+      <button class="primary-btn teal" id="gal-save-pdf">Save as PDF</button>
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+</div>
+
+<canvas id="canvas-hidden"></canvas>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  /* ---------------- state ---------------- */
+  const state = {
+    stream:null,
+    facingMode:"environment",
+    mode:"document",
+    pages:[],            // {flatDataUrl, filter, w, h}
+    activePageIndex:null,
+    rawCapture:null,     // {img, naturalW, naturalH}
+    corners:null,        // 4 points in stage-display coordinates [{x,y} tl,tr,br,bl]
+    dragIndex:-1,
+    editingExisting:false
+  };
+
+  const FILTERS = [
+    {id:"original", name:"Original"},
+    {id:"enhance",  name:"Enhance"},
+    {id:"gray",     name:"Grayscale"},
+    {id:"bw",       name:"B & W"}
+  ];
+
+  /* ---------------- utils ---------------- */
+  const $ = (id) => document.getElementById(id);
+  function showScreen(id){
+    document.querySelectorAll(".screen").forEach(s=>s.classList.remove("active"));
+    $(id).classList.add("active");
+  }
+  function toast(msg){
+    const t = $("toast");
+    t.textContent = msg;
+    t.classList.add("show");
+    clearTimeout(toast._t);
+    toast._t = setTimeout(()=>t.classList.remove("show"), 1800);
+  }
+
+  /* ---------------- camera ---------------- */
+  async function startCamera(){
+    stopCamera();
+    try{
+      const constraints = { video:{ facingMode: state.facingMode, width:{ideal:1920}, height:{ideal:1080} }, audio:false };
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      state.stream = stream;
+      $("video").srcObject = stream;
+      $("no-cam-msg").style.display = "none";
+    }catch(err){
+      $("no-cam-msg").style.display = "flex";
+    }
+  }
+  function stopCamera(){
+    if(state.stream){ state.stream.getTracks().forEach(t=>t.stop()); state.stream = null; }
+  }
+
+  $("flip-btn").addEventListener("click", ()=>{
+    state.facingMode = state.facingMode === "environment" ? "user" : "environment";
+    startCamera();
+  });
+
+  $("flash-btn").addEventListener("click", ()=>{
+    const el = $("flash-overlay");
+    el.classList.remove("flashing"); void el.offsetWidth; el.classList.add("flashing");
+  });
+
+  document.querySelectorAll(".mode-chip").forEach(chip=>{
+    chip.addEventListener("click", ()=>{
+      document.querySelectorAll(".mode-chip").forEach(c=>c.classList.remove("active"));
+      chip.classList.add("active");
+      state.mode = chip.dataset.mode;
+      $("mode-label").textContent = chip.textContent;
+    });
+  });
+
+  /* ---------------- capture ---------------- */
+  $("shutter-btn").addEventListener("click", captureFrame);
+  $("import-btn").addEventListener("click", ()=> $("file-input").click());
+  $("file-input").addEventListener("change", (e)=>{
+    const file = e.target.files[0];
+    if(!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev)=> loadCaptureFromDataUrl(ev.target.result);
+    reader.readAsDataURL(file);
+    e.target.value = "";
+  });
+
+  function captureFrame(){
+    const video = $("video");
+    if(!video.videoWidth){ toast("Camera not ready"); return; }
+    const el = $("flash-overlay");
+    el.classList.remove("flashing"); void el.offsetWidth; el.classList.add("flashing");
+    const sweep = $("sweep");
+    sweep.classList.remove("playing"); void sweep.offsetWidth; sweep.classList.add("playing");
+
+    const c = $("canvas-hidden");
+    c.width = video.videoWidth; c.height = video.videoHeight;
+    const ctx = c.getContext("2d");
+    ctx.drawImage(video, 0, 0, c.width, c.height);
+    const dataUrl = c.toDataURL("image/jpeg", 0.95);
+    setTimeout(()=> loadCaptureFromDataUrl(dataUrl), 350);
+  }
+
+  function loadCaptureFromDataUrl(dataUrl){
+    const img = new Image();
+    img.onload = ()=>{
+      state.rawCapture = { img, naturalW: img.naturalWidth, naturalH: img.naturalHeight };
+      openEditScreen();
+    };
+    img.src = dataUrl;
+  }
+
+  /* ---------------- edit / crop screen ---------------- */
+  const NS = "http://www.w3.org/2000/svg";
+
+  function openEditScreen(){
+    showScreen("screen-edit");
+    const stage = $("edit-stage");
+    const imgEl = $("edit-img");
+    imgEl.src = state.rawCapture.img.src;
+
+    imgEl.onload = ()=>{
+      requestAnimationFrame(()=>{
+        const rect = imgEl.getBoundingClientRect();
+        const stageRect = stage.getBoundingClientRect();
+        const left = rect.left - stageRect.left, top = rect.top - stageRect.top;
+        const w = rect.width, h = rect.height;
+        const inset = 0.06;
+        state.corners = [
+          {x:left + w*inset,     y:top + h*inset},     // TL
+          {x:left + w*(1-inset), y:top + h*inset},     // TR
+          {x:left + w*(1-inset), y:top + h*(1-inset)}, // BR
+          {x:left + w*inset,     y:top + h*(1-inset)}  // BL
+        ];
+        state.imgDisplayRect = {left, top, w, h};
+        drawCropOverlay();
+      });
+    };
+    if(imgEl.complete) imgEl.onload();
+  }
+
+  function drawCropOverlay(){
+    const svg = $("crop-svg");
+    const stage = $("edit-stage");
+    const stageRect = stage.getBoundingClientRect();
+    svg.setAttribute("width", stageRect.width);
+    svg.setAttribute("height", stageRect.height);
+    svg.style.width = stageRect.width+"px";
+    svg.style.height = stageRect.height+"px";
+    svg.innerHTML = "";
+
+    const pts = state.corners.map(p=>`${p.x},${p.y}`).join(" ");
+    const poly = document.createElementNS(NS,"polygon");
+    poly.setAttribute("points", pts);
+    svg.appendChild(poly);
+
+    state.corners.forEach((p,i)=>{
+      const ring = document.createElementNS(NS,"circle");
+      ring.setAttribute("cx",p.x); ring.setAttribute("cy",p.y); ring.setAttribute("r",18);
+      ring.setAttribute("class","handle-ring");
+      svg.appendChild(ring);
+
+      const h = document.createElementNS(NS,"circle");
+      h.setAttribute("cx",p.x); h.setAttribute("cy",p.y); h.setAttribute("r",10);
+      h.setAttribute("class","handle");
+      h.dataset.idx = i;
+      h.addEventListener("pointerdown", onHandleDown);
+      svg.appendChild(h);
+    });
+  }
+
+  function onHandleDown(e){
+    e.preventDefault();
+    state.dragIndex = parseInt(e.target.dataset.idx,10);
+    window.addEventListener("pointermove", onHandleMove);
+    window.addEventListener("pointerup", onHandleUp);
+  }
+  function onHandleMove(e){
+    if(state.dragIndex < 0) return;
+    const stage = $("edit-stage");
+    const r = stage.getBoundingClientRect();
+    let x = e.clientX - r.left, y = e.clientY - r.top;
+    x = Math.max(0, Math.min(r.width, x));
+    y = Math.max(0, Math.min(r.height, y));
+    state.corners[state.dragIndex] = {x,y};
+    drawCropOverlay();
+  }
+  function onHandleUp(){
+    state.dragIndex = -1;
+    window.removeEventListener("pointermove", onHandleMove);
+    window.removeEventListener("pointerup", onHandleUp);
+  }
+
+  $("edit-cancel").addEventListener("click", ()=>{
+    state.rawCapture = null;
+    showScreen("screen-camera");
+  });
+  $("edit-retake").addEventListener("click", ()=>{
+    state.rawCapture = null;
+    showScreen("screen-camera");
+  });
+  $("edit-rotate").addEventListener("click", ()=>{
+    rotateRawCapture90();
+  });
+
+  function rotateRawCapture90(){
+    const img = state.rawCapture.img;
+    const c = document.createElement("canvas");
+    c.width = img.naturalHeight; c.height = img.naturalWidth;
+    const ctx = c.getContext("2d");
+    ctx.translate(c.width/2, c.height/2);
+    ctx.rotate(Math.PI/2);
+    ctx.drawImage(img, -img.naturalWidth/2, -img.naturalHeight/2);
+    const newImg = new Image();
+    newImg.onload = ()=>{
+      state.rawCapture = { img:newImg, naturalW:newImg.naturalWidth, naturalH:newImg.naturalHeight };
+      openEditScreen();
+    };
+    newImg.src = c.toDataURL("image/jpeg",0.95);
+  }
+
+  $("edit-confirm").addEventListener("click", ()=>{
+    const flatCanvas = flattenPerspective();
+    openFilterScreen(flatCanvas);
+  });
+
+  /* ---------------- perspective flatten (homography) ---------------- */
+  function computeSquareToQuad(x0,y0,x1,y1,x2,y2,x3,y3){
+    const dx1 = x1-x2, dx2 = x3-x2, dx3 = x0-x1+x2-x3;
+    const dy1 = y1-y2, dy2 = y3-y2, dy3 = y0-y1+y2-y3;
+    let a11,a12,a13,a21,a22,a23,a31,a32,a33;
+    if (Math.abs(dx3) < 1e-9 && Math.abs(dy3) < 1e-9) {
+      a13 = 0; a23 = 0;
+      a11 = x1-x0; a21 = x2-x1;
+      a12 = y1-y0; a22 = y2-y1;
+    } else {
+      const denom = dx1*dy2 - dx2*dy1;
+      a13 = (dx3*dy2 - dx2*dy3) / denom;
+      a23 = (dx1*dy3 - dx3*dy1) / denom;
+      a11 = x1 - x0 + a13*x1;
+      a21 = x3 - x0 + a23*x3;
+      a12 = y1 - y0 + a13*y1;
+      a22 = y3 - y0 + a23*y3;
+    }
+    a31 = x0; a32 = y0; a33 = 1;
+    return [[a11,a12,a13],[a21,a22,a23],[a31,a32,a33]];
+  }
+  function matMul3(A,B){
+    const R = [[0,0,0],[0,0,0],[0,0,0]];
+    for(let i=0;i<3;i++) for(let j=0;j<3;j++){
+      let s=0; for(let k=0;k<3;k++) s += A[i][k]*B[k][j];
+      R[i][j]=s;
+    }
+    return R;
+  }
+  function applyRow(M, x, y){
+    // (x,y,1) * M -> (X,Y,W)
+    const X = x*M[0][0] + y*M[1][0] + M[2][0];
+    const Y = x*M[0][1] + y*M[1][1] + M[2][1];
+    const W = x*M[0][2] + y*M[1][2] + M[2][2];
+    return [X/W, Y/W];
+  }
+
+  function flattenPerspective(){
+    const img = state.rawCapture.img;
+    const dispRect = state.imgDisplayRect;
+    const scaleX = img.naturalWidth / dispRect.w;
+    const scaleY = img.naturalHeight / dispRect.h;
+
+    // corners in original image pixel space (TL,TR,BR,BL)
+    const src = state.corners.map(p=>({
+      x:(p.x - dispRect.left) * scaleX,
+      y:(p.y - dispRect.top) * scaleY
+    }));
+
+    const wTop = Math.hypot(src[1].x-src[0].x, src[1].y-src[0].y);
+    const wBot = Math.hypot(src[2].x-src[3].x, src[2].y-src[3].y);
+    const hLeft = Math.hypot(src[3].x-src[0].x, src[3].y-src[0].y);
+    const hRight = Math.hypot(src[2].x-src[1].x, src[2].y-src[1].y);
+    let outW = Math.round(Math.max(wTop, wBot));
+    let outH = Math.round(Math.max(hLeft, hRight));
+    const MAXDIM = 1800;
+    if(Math.max(outW,outH) > MAXDIM){
+      const s = MAXDIM / Math.max(outW,outH);
+      outW = Math.round(outW*s); outH = Math.round(outH*s);
+    }
+    outW = Math.max(outW, 40); outH = Math.max(outH, 40);
+
+    // source canvas (full original image) pixels
+    const srcCanvas = document.createElement("canvas");
+    srcCanvas.width = img.naturalWidth; srcCanvas.height = img.naturalHeight;
+    const sctx = srcCanvas.getContext("2d");
+    sctx.drawImage(img,0,0);
+    const srcData = sctx.getImageData(0,0,srcCanvas.width,srcCanvas.height);
+
+    const Msq2quad = computeSquareToQuad(
+      src[0].x,src[0].y, src[1].x,src[1].y, src[2].x,src[2].y, src[3].x,src[3].y
+    );
+    const invScale = [[1/outW,0,0],[0,1/outH,0],[0,0,1]];
+    const Mfinal = matMul3(invScale, Msq2quad); // dst*(invScale*Msq2quad) -> source
+
+    const outCanvas = document.createElement("canvas");
+    outCanvas.width = outW; outCanvas.height = outH;
+    const octx = outCanvas.getContext("2d");
+    const outData = octx.createImageData(outW, outH);
+
+    const sw = srcCanvas.width, sh = srcCanvas.height;
+    const sPix = srcData.data, oPix = outData.data;
+
+    for(let dy=0; dy<outH; dy++){
+      for(let dx=0; dx<outW; dx++){
+        const [sx, sy] = applyRow(Mfinal, dx, dy);
+        const oi = (dy*outW+dx)*4;
+        if(sx < 0 || sy < 0 || sx >= sw-1 || sy >= sh-1){
+          oPix[oi]=255; oPix[oi+1]=255; oPix[oi+2]=255; oPix[oi+3]=255;
+          continue;
+        }
+        const x0 = sx|0, y0 = sy|0;
+        const fx = sx-x0, fy = sy-y0;
+        const i00 = (y0*sw+x0)*4, i10=(y0*sw+x0+1)*4, i01=((y0+1)*sw+x0)*4, i11=((y0+1)*sw+x0+1)*4;
+        for(let c=0;c<4;c++){
+          const top = sPix[i00+c]*(1-fx) + sPix[i10+c]*fx;
+          const bot = sPix[i01+c]*(1-fx) + sPix[i11+c]*fx;
+          oPix[oi+c] = top*(1-fy) + bot*fy;
+        }
+      }
+    }
+    octx.putImageData(outData,0,0);
+    return outCanvas;
+  }
+
+  /* ---------------- filter screen ---------------- */
+  let filterState = { baseCanvas:null, current:"original" };
+
+  function applyFilterToCanvas(baseCanvas, filterId){
+    const out = document.createElement("canvas");
+    out.width = baseCanvas.width; out.height = baseCanvas.height;
+    const ctx = out.getContext("2d");
+    ctx.drawImage(baseCanvas,0,0);
+    if(filterId === "original"){ return out; }
+    const data = ctx.getImageData(0,0,out.width,out.height);
+    const d = data.data;
+    if(filterId === "gray"){
+      for(let i=0;i<d.length;i+=4){
+        const v = 0.299*d[i]+0.587*d[i+1]+0.114*d[i+2];
+        d[i]=d[i+1]=d[i+2]=v;
+      }
+    } else if(filterId === "bw"){
+      for(let i=0;i<d.length;i+=4){
+        const v = 0.299*d[i]+0.587*d[i+1]+0.114*d[i+2];
+        const t = v > 150 ? 255 : (v < 90 ? 0 : v);
+        d[i]=d[i+1]=d[i+2]=t;
+      }
+    } else if(filterId === "enhance"){
+      const contrast = 1.25, brightness = 12;
+      for(let i=0;i<d.length;i+=4){
+        for(let c=0;c<3;c++){
+          let v = (d[i+c]-128)*contrast + 128 + brightness;
+          d[i+c] = Math.max(0,Math.min(255,v));
+        }
+      }
+    }
+    ctx.putImageData(data,0,0);
+    return out;
+  }
+
+  function openFilterScreen(baseCanvas){
+    filterState.baseCanvas = baseCanvas;
+    filterState.current = state.mode === "whiteboard" ? "bw" : "original";
+    showScreen("screen-filter");
+    $("filter-page-label").textContent = state.editingExisting
+      ? `Page ${state.activePageIndex+1}` : `Page ${state.pages.length+1}`;
+
+    const row = $("filter-row");
+    row.innerHTML = "";
+    FILTERS.forEach(f=>{
+      const chip = document.createElement("div");
+      chip.className = "filter-chip" + (f.id===filterState.current ? " active":"");
+      chip.dataset.id = f.id;
+      const thumbCanvas = applyFilterToCanvas(baseCanvas, f.id);
+      const thumbImg = document.createElement("img");
+      thumbImg.src = thumbCanvas.toDataURL("image/jpeg",0.7);
+      const thumbWrap = document.createElement("div");
+      thumbWrap.className = "filter-thumb";
+      thumbWrap.appendChild(thumbImg);
+      const label = document.createElement("span");
+      label.textContent = f.name;
+      chip.appendChild(thumbWrap);
+      chip.appendChild(label);
+      chip.addEventListener("click", ()=>{
+        document.querySelectorAll(".filter-chip").forEach(c=>c.classList.remove("active"));
+        chip.classList.add("active");
+        filterState.current = f.id;
+        renderFilterPreview();
+      });
+      row.appendChild(chip);
+    });
+    renderFilterPreview();
+  }
+
+  function renderFilterPreview(){
+    const result = applyFilterToCanvas(filterState.baseCanvas, filterState.current);
+    const canvas = $("filter-canvas");
+    const maxW = 420, maxH = 560;
+    let w = result.width, h = result.height;
+    const scale = Math.min(maxW/w, maxH/h, 1);
+    canvas.width = w*scale; canvas.height = h*scale;
+    const ctx = canvas.getContext("2d");
+    ctx.drawImage(result, 0,0,canvas.width, canvas.height);
+    filterState.lastResultFull = result;
+  }
+
+  $("filter-back").addEventListener("click", ()=>{
+    showScreen("screen-edit");
+  });
+
+  function commitPage(){
+    const finalCanvas = applyFilterToCanvas(filterState.baseCanvas, filterState.current);
+    const entry = {
+      dataUrl: finalCanvas.toDataURL("image/jpeg",0.92),
+      w: finalCanvas.width, h: finalCanvas.height,
+      filter: filterState.current
+    };
+    if(state.editingExisting && state.activePageIndex !== null){
+      state.pages[state.activePageIndex] = entry;
+    } else {
+      state.pages.push(entry);
+    }
+    state.editingExisting = false;
+    state.activePageIndex = null;
+    updateThumbBadge();
+  }
+
+  $("filter-scan-another").addEventListener("click", ()=>{
+    commitPage();
+    state.rawCapture = null;
+    showScreen("screen-camera");
+    toast("Page added");
+  });
+  $("filter-done").addEventListener("click", ()=>{
+    commitPage();
+    state.rawCapture = null;
+    renderGallery();
+    showScreen("screen-gallery");
+  });
+
+  function updateThumbBadge(){
+    const badge = $("thumb-count");
+    const stack = $("thumb-stack");
+    if(state.pages.length > 0){
+      badge.style.display = "flex";
+      badge.textContent = state.pages.length;
+      stack.style.backgroundImage = `url(${state.pages[state.pages.length-1].dataUrl})`;
+    } else {
+      badge.style.display = "none";
+      stack.style.backgroundImage = "none";
+    }
+  }
+  $("thumb-stack").addEventListener("click", ()=>{
+    if(state.pages.length === 0){ toast("No pages yet — scan one first"); return; }
+    renderGallery();
+    showScreen("screen-gallery");
+  });
+
+  /* ---------------- gallery ---------------- */
+  function renderGallery(){
+    $("gal-title").textContent = state.pages.length + (state.pages.length===1 ? " page" : " pages");
+    const grid = $("gal-grid");
+    grid.innerHTML = "";
+    $("gal-empty").style.display = state.pages.length ? "none" : "flex";
+    state.pages.forEach((p,i)=>{
+      const item = document.createElement("div");
+      item.className = "gal-item";
+      const img = document.createElement("img");
+      img.src = p.dataUrl;
+      const no = document.createElement("div");
+      no.className = "page-no"; no.textContent = "Page " + (i+1);
+      const del = document.createElement("button");
+      del.className = "del-btn";
+      del.innerHTML = "&times;";
+      del.addEventListener("click",(e)=>{ e.stopPropagation(); state.pages.splice(i,1); renderGallery(); updateThumbBadge(); });
+      item.appendChild(img); item.appendChild(no); item.appendChild(del);
+      item.addEventListener("click", ()=> reopenPageForEdit(i));
+      grid.appendChild(item);
+    });
+  }
+
+  function reopenPageForEdit(i){
+    const p = state.pages[i];
+    const img = new Image();
+    img.onload = ()=>{
+      const c = document.createElement("canvas");
+      c.width = img.naturalWidth; c.height = img.naturalHeight;
+      c.getContext("2d").drawImage(img,0,0);
+      state.editingExisting = true;
+      state.activePageIndex = i;
+      openFilterScreen(c);
+    };
+    img.src = p.dataUrl;
+  }
+
+  $("gal-back").addEventListener("click", ()=> showScreen("screen-camera"));
+  $("gal-add").addEventListener("click", ()=> showScreen("screen-camera"));
+
+  $("gal-save-images").addEventListener("click", ()=>{
+    if(!state.pages.length){ toast("No pages to save"); return; }
+    state.pages.forEach((p,i)=>{
+      setTimeout(()=>{
+        const a = document.createElement("a");
+        a.href = p.dataUrl;
+        a.download = `scan-page-${i+1}.jpg`;
+        document.body.appendChild(a); a.click(); a.remove();
+      }, i*250);
+    });
+    toast("Saving images…");
+  });
+
+  $("gal-save-pdf").addEventListener("click", ()=>{
+    if(!state.pages.length){ toast("No pages to save"); return; }
+    if(!window.jspdf){ toast("PDF library unavailable — check connection"); return; }
+    const { jsPDF } = window.jspdf;
+    const first = state.pages[0];
+    const orientation = first.w > first.h ? "l" : "p";
+    const pdf = new jsPDF({ orientation, unit:"pt", format:[first.w*0.75, first.h*0.75] });
+    state.pages.forEach((p,i)=>{
+      const pw = p.w*0.75, ph = p.h*0.75;
+      if(i>0) pdf.addPage([pw,ph], p.w>p.h ? "l":"p");
+      pdf.addImage(p.dataUrl, "JPEG", 0, 0, pw, ph);
+    });
+    pdf.save("scan.pdf");
+    toast("PDF saved");
+  });
+
+  /* ---------------- init ---------------- */
+  window.addEventListener("resize", ()=>{
+    if($("screen-edit").classList.contains("active") && state.corners){
+      drawCropOverlay();
+    }
+  });
+
+  startCamera();
+})();
+</script>
+</body>
+</html>
